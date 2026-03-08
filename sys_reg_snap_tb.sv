@@ -14,8 +14,6 @@ module sys_reg_snap_tb;
   typedef logic [ADDR_WIDTH-1:0] addr_t;
   typedef logic [REG_WIDTH-1:0]  data_t;
 
-  sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
-
   int pass_cnt = 0;
   int fail_cnt = 0;
 
@@ -29,128 +27,163 @@ module sys_reg_snap_tb;
     end
   endfunction
 
+  function automatic sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) new_snap(string inst_name);
+    sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) s;
+    s = new(inst_name);
+    s.enable_log = 1;
+    return s;
+  endfunction
+
   initial begin
     data_t val;
     sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH))::snap_queue_t snaps;
 
-    snap = new("snap");
-    snap.enable_log = 1;
-
     // ========================================================================
     $display("\n=== Test 1: miss (no history) ===");
     // ========================================================================
-    check("miss on empty snap", snap.get_value_at(4'd3, 4'h1, val) == 0);
-    check("snap is empty",      snap.empty());
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t1_snap");
+      check("miss on empty snap", snap.get_value_at(4'd3, 4'h1, val) == 0);
+      check("snap is empty",      snap.empty());
+    end
 
     // ========================================================================
     $display("\n=== Test 2: motivating example — ADD + MSR ===");
     // ========================================================================
-    // REG1 wire = 0x0014 (20).  MSR(rid=2) is about to write 10.
-    // Record pre_value before MSR executes.
-    snap.record_update(4'd2, 4'h1, 16'h0014);
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t2_snap");
 
-    // ADD(rid=1): no MSR younger than rid=1 → miss → use wire (which is now 10)
-    // But wait: with the new design, miss means "use current wire" — which for
-    // instructions OLDER than all MSRs is WRONG unless we have the pre_value.
-    // The hit case: rid=1 < rid=2, so rid=2 IS younger than rid=1 → hit, pre=0x14 ✓
-    check("ADD(rid=1) hits, gets pre-MSR value", snap.get_value_at(4'd1, 4'h1, val));
-    check("value is 0x0014 (20)",                val == 16'h0014);
+      // REG1 wire = 0x0014 (20).  MSR(rid=2) is about to write 10.
+      // Record pre_value before MSR executes.
+      snap.record_update(4'd2, 4'h1, 16'h0014);
 
-    // rid=3 (after MSR): rid=2 is NOT younger than rid=3 → miss → wire correct
-    check("rid=3 miss (use wire=10)", snap.get_value_at(4'd3, 4'h1, val) == 0);
+      // ADD(rid=1): rid=2 IS younger than rid=1 → hit, pre=0x14
+      check("ADD(rid=1) hits, gets pre-MSR value", snap.get_value_at(4'd1, 4'h1, val));
+      check("value is 0x0014 (20)",                val == 16'h0014);
 
-    // rid=2 itself: rid=2 NOT younger than rid=2 → miss
-    check("rid=2 miss (exact)",       snap.get_value_at(4'd2, 4'h1, val) == 0);
+      // rid=3 (after MSR): rid=2 is NOT younger than rid=3 → miss
+      check("rid=3 miss (use wire=10)", snap.get_value_at(4'd3, 4'h1, val) == 0);
+
+      // rid=2 itself: rid=2 NOT younger than rid=2 → miss
+      check("rid=2 miss (exact)",       snap.get_value_at(4'd2, 4'h1, val) == 0);
+    end
 
     // ========================================================================
     $display("\n=== Test 3: multiple MSRs to same register ===");
     // ========================================================================
-    // State: REG1 pre-record at rid=2(pre=0x0014)
-    // MSR(rid=4) executes next (in order). Wire is now 10 (0x000A).
-    snap.record_update(4'd4, 4'h1, 16'h000A);
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t3_snap");
 
-    // rid=1 should get oldest younger MSR → rid=2 (pre=0x0014)
-    check("rid=1 gets oldest younger rid=2", snap.get_value_at(4'd1, 4'h1, val));
-    check("value is 0x0014",                 val == 16'h0014);
+      snap.record_update(4'd2, 4'h1, 16'h0014);
+      snap.record_update(4'd4, 4'h1, 16'h000A);
 
-    // rid=3: younger MSRs are rid=4 only (rid=2 is older) → pre of rid=4 = 0x000A
-    check("rid=3 gets oldest younger rid=4", snap.get_value_at(4'd3, 4'h1, val));
-    check("value is 0x000A",                 val == 16'h000A);
+      // rid=1 should get oldest younger MSR → rid=2 (pre=0x0014)
+      check("rid=1 gets oldest younger rid=2", snap.get_value_at(4'd1, 4'h1, val));
+      check("value is 0x0014",                 val == 16'h0014);
 
-    // rid=5: no younger MSR → miss
-    check("rid=5 miss",                      snap.get_value_at(4'd5, 4'h1, val) == 0);
+      // rid=3: younger MSRs are rid=4 only (rid=2 is older) → pre of rid=4 = 0x000A
+      check("rid=3 gets oldest younger rid=4", snap.get_value_at(4'd3, 4'h1, val));
+      check("value is 0x000A",                 val == 16'h000A);
+
+      // rid=5: no younger MSR → miss
+      check("rid=5 miss",                      snap.get_value_at(4'd5, 4'h1, val) == 0);
+    end
 
     // ========================================================================
     $display("\n=== Test 4: multiple registers ===");
     // ========================================================================
-    // REG2 wire = 0x0020.  MSR(rid=3) writes REG2.
-    snap.record_update(4'd3, 4'h2, 16'h0020);
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t4_snap");
 
-    // rid=1 for REG2: rid=3 younger → pre=0x0020
-    check("rid=1 hits REG2",        snap.get_value_at(4'd1, 4'h2, val));
-    check("REG2 pre=0x0020",        val == 16'h0020);
+      // REG2 wire = 0x0020.  MSR(rid=3) writes REG2.
+      snap.record_update(4'd3, 4'h2, 16'h0020);
 
-    // rid=5 for REG2: rid=3 not younger → miss
-    check("rid=5 misses REG2",      snap.get_value_at(4'd5, 4'h2, val) == 0);
+      // rid=1 for REG2: rid=3 younger → pre=0x0020
+      check("rid=1 hits REG2",        snap.get_value_at(4'd1, 4'h2, val));
+      check("REG2 pre=0x0020",        val == 16'h0020);
+
+      // rid=5 for REG2: rid=3 not younger → miss
+      check("rid=5 misses REG2",      snap.get_value_at(4'd5, 4'h2, val) == 0);
+    end
 
     // ========================================================================
     $display("\n=== Test 5: get_snapshot_at ===");
     // ========================================================================
-    // Records: REG1@rid=2(pre=0x0014), REG1@rid=4(pre=0x000A), REG2@rid=3(pre=0x0020)
-
-    // Snapshot at rid=1: younger MSRs are rid=2(REG1), rid=4(REG1), rid=3(REG2)
-    //   REG1: oldest younger = rid=2 → 0x0014
-    //   REG2: oldest younger = rid=3 → 0x0020
-    snaps = snap.get_snapshot_at(4'd1);
-    check("snapshot at rid=1: 2 regs", snaps.size() == 2);
     begin
-      bit found_r1;
-      bit found_r2;
-      found_r1 = 0; found_r2 = 0;
-      foreach (snaps[i]) begin
-        if (snaps[i].reg_addr == 4'h1 && snaps[i].value == 16'h0014) found_r1 = 1;
-        if (snaps[i].reg_addr == 4'h2 && snaps[i].value == 16'h0020) found_r2 = 1;
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t5_snap");
+
+      // Records: REG1@rid=2(pre=0x0014), REG1@rid=4(pre=0x000A), REG2@rid=3(pre=0x0020)
+      snap.record_update(4'd2, 4'h1, 16'h0014);
+      snap.record_update(4'd4, 4'h1, 16'h000A);
+      snap.record_update(4'd3, 4'h2, 16'h0020);
+
+      // Snapshot at rid=1: younger MSRs are rid=2(REG1), rid=4(REG1), rid=3(REG2)
+      //   REG1: oldest younger = rid=2 → 0x0014
+      //   REG2: oldest younger = rid=3 → 0x0020
+      snaps = snap.get_snapshot_at(4'd1);
+      check("snapshot at rid=1: 2 regs", snaps.size() == 2);
+      begin
+        bit found_r1;
+        bit found_r2;
+        found_r1 = 0; found_r2 = 0;
+        foreach (snaps[i]) begin
+          if (snaps[i].reg_addr == 4'h1 && snaps[i].value == 16'h0014) found_r1 = 1;
+          if (snaps[i].reg_addr == 4'h2 && snaps[i].value == 16'h0020) found_r2 = 1;
+        end
+        check("snapshot rid=1: REG1=0x0014", found_r1);
+        check("snapshot rid=1: REG2=0x0020", found_r2);
       end
-      check("snapshot rid=1: REG1=0x0014", found_r1);
-      check("snapshot rid=1: REG2=0x0020", found_r2);
+
+      // Snapshot at rid=3: younger MSRs are rid=4(REG1) only (rid=2,3 not younger)
+      //   REG1: oldest younger = rid=4 → 0x000A
+      //   REG2: no younger → omitted
+      snaps = snap.get_snapshot_at(4'd3);
+      check("snapshot at rid=3: 1 reg", snaps.size() == 1);
+      check("snapshot rid=3: REG1=0x000A",
+            snaps.size() == 1 && snaps[0].reg_addr == 4'h1 && snaps[0].value == 16'h000A);
+
+      // Snapshot at rid=5: no younger MSRs → empty
+      snaps = snap.get_snapshot_at(4'd5);
+      check("snapshot at rid=5: 0 regs", snaps.size() == 0);
     end
-
-    // Snapshot at rid=3: younger MSRs are rid=4(REG1) only (rid=2,3 not younger)
-    //   REG1: oldest younger = rid=4 → 0x000A
-    //   REG2: no younger → omitted
-    snaps = snap.get_snapshot_at(4'd3);
-    check("snapshot at rid=3: 1 reg", snaps.size() == 1);
-    check("snapshot rid=3: REG1=0x000A",
-          snaps.size() == 1 && snaps[0].reg_addr == 4'h1 && snaps[0].value == 16'h000A);
-
-    // Snapshot at rid=5: no younger MSRs → empty
-    snaps = snap.get_snapshot_at(4'd5);
-    check("snapshot at rid=5: 0 regs", snaps.size() == 0);
 
     // ========================================================================
     $display("\n=== Test 6: retire ===");
     // ========================================================================
-    // retire(rid=3): removes rid=2(REG1), rid=3(REG2); keeps rid=4(REG1)
-    snap.retire(4'd3);
-    check("size=1 after retire(3)", snap.size() == 1);
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t6_snap");
 
-    // rid=1 for REG1: only rid=4 remains; it is younger → pre=0x000A
-    check("rid=1 now gets rid=4 pre", snap.get_value_at(4'd1, 4'h1, val));
-    check("value=0x000A",             val == 16'h000A);
+      snap.record_update(4'd2, 4'h1, 16'h0014);
+      snap.record_update(4'd4, 4'h1, 16'h000A);
+      snap.record_update(4'd3, 4'h2, 16'h0020);
 
-    // REG2 fully retired → miss
-    check("REG2 miss after retire",   snap.get_value_at(4'd1, 4'h2, val) == 0);
+      // retire(rid=3): removes rid=2(REG1), rid=3(REG2); keeps rid=4(REG1)
+      snap.retire(4'd3);
+      check("size=1 after retire(3)", snap.size() == 1);
 
-    // rid=5 for REG1: rid=4 not younger → miss
-    check("rid=5 miss REG1 after retire", snap.get_value_at(4'd5, 4'h1, val) == 0);
+      // rid=1 for REG1: only rid=4 remains; it is younger → pre=0x000A
+      check("rid=1 now gets rid=4 pre", snap.get_value_at(4'd1, 4'h1, val));
+      check("value=0x000A",             val == 16'h000A);
+
+      // REG2 fully retired → miss
+      check("REG2 miss after retire",   snap.get_value_at(4'd1, 4'h2, val) == 0);
+
+      // rid=5 for REG1: rid=4 not younger → miss
+      check("rid=5 miss REG1 after retire", snap.get_value_at(4'd5, 4'h1, val) == 0);
+    end
 
     // ========================================================================
     $display("\n=== Test 7: wrap-around RID ===");
     // ========================================================================
     begin
       sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) ws;
-      ws = new("wrap_snap");
-      ws.enable_log = 1;
+      ws = new_snap("wrap_snap");
 
       // ID_WIDTH=4: wrap at 0b1xxx.  Sequence: ...6,7,8(wrapped),9,...
       // is_younger(8,7)=true (8 wrapped, 7 not; val_8=0 < val_7=7)
@@ -185,8 +218,7 @@ module sys_reg_snap_tb;
     // ========================================================================
     begin
       sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) mr;
-      mr = new("multi_reg_snap");
-      mr.enable_log = 1;
+      mr = new_snap("multi_reg_snap");
 
       // One MSR instruction writing two registers at rid=3 (legal)
       mr.record_update(4'd3, 4'h0, 16'h1000);
@@ -207,7 +239,47 @@ module sys_reg_snap_tb;
     // ========================================================================
     $display("\n=== Test 9: dump (visual check) ===");
     // ========================================================================
-    snap.dump();
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t9_snap");
+      snap.record_update(4'd2, 4'h1, 16'h0014);
+      snap.record_update(4'd4, 4'h1, 16'h000A);
+      snap.record_update(4'd3, 4'h2, 16'h0020);
+      snap.dump();
+    end
+
+    // ========================================================================
+    $display("\n=== Test 10: wrap boundary 15->0 with retire ===");
+    // ========================================================================
+    begin
+      sys_reg_snap #(.ID_WIDTH(ID_WIDTH), .REG_WIDTH(REG_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)) snap;
+      snap = new_snap("t10_wrap_retire");
+
+      // Cross-boundary records: 14,15,0,1 (program order)
+      snap.record_update(4'd14, 4'h1, 16'h0E0E);
+      snap.record_update(4'd15, 4'h1, 16'h0F0F);
+      snap.record_update(4'd0,  4'h1, 16'h0000);
+      snap.record_update(4'd1,  4'h1, 16'h0101);
+
+      // query rid=13: younger are 14,15,0,1 -> oldest younger is 14
+      check("wrap15->0: rid=13 gets pre of rid=14", snap.get_value_at(4'd13, 4'h1, val));
+      check("wrap15->0: value=0x0E0E",              val == 16'h0E0E);
+
+      // query rid=15: younger are 0,1 -> oldest younger is 0
+      check("wrap15->0: rid=15 gets pre of rid=0", snap.get_value_at(4'd15, 4'h1, val));
+      check("wrap15->0: value=0x0000",             val == 16'h0000);
+
+      snaps = snap.get_snapshot_at(4'd15);
+      check("wrap15->0: snapshot rid=15 has 1 reg", snaps.size() == 1);
+      check("wrap15->0: snapshot value=0x0000",
+            snaps.size() == 1 && snaps[0].reg_addr == 4'h1 && snaps[0].value == 16'h0000);
+
+      // retire(15): keep only younger than 15 -> rid 0/1 remain
+      snap.retire(4'd15);
+      check("wrap15->0: size=2 after retire(15)", snap.size() == 2);
+      check("wrap15->0: rid=15 still resolves via rid=0", snap.get_value_at(4'd15, 4'h1, val));
+      check("wrap15->0: value still 0x0000",               val == 16'h0000);
+    end
 
     // ========================================================================
     // Summary

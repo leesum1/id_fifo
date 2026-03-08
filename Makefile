@@ -23,11 +23,15 @@ VFLAGS2    := --binary --timing -sv -Wall \
               --top-module $(TOP2) \
               -Mdir $(BUILD_DIR2)
 
-.PHONY: all sim sim_snap lint lint_snap clean
+.PHONY: all sim sim_snap lint lint_id_fifo lint_snap check clean
 
 all: sim sim_snap
 
-lint:
+lint: lint_id_fifo lint_snap
+
+check: lint
+
+lint_id_fifo:
 	verilator --lint-only --timing -sv -Wall $(SRC1)
 
 lint_snap:

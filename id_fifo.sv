@@ -75,6 +75,11 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
       return (val_a < val_b);
   endfunction
 
+  // Returns 1 if `a` is strictly older than `b`.
+  static function bit is_older(id_t a, id_t b);
+    return is_younger(b, a);
+  endfunction
+
   // ==========================================================================
   // push — append (id, data) to the FIFO tail
   // ==========================================================================
@@ -265,6 +270,35 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
 
   function bit empty();
     return (entries.size() == 0);
+  endfunction
+
+  // ==========================================================================
+  // sort — reorder entries by ID age (oldest first, youngest last)
+  // ==========================================================================
+  function void sort();
+    int i;
+
+    // Stable insertion sort with wrap-aware age comparison.
+    // Invariant: entries[0:i-1] is sorted from oldest -> youngest.
+    for (i = 1; i < entries.size(); i++) begin
+      entry_t insert_entry;
+      int scan;
+
+      insert_entry = entries[i];
+      scan = i - 1;
+
+      // Shift younger entries right until the insertion point is found.
+      while (scan >= 0 && is_older(insert_entry.id, entries[scan].id)) begin
+        entries[scan + 1] = entries[scan];
+        scan--;
+      end
+
+      entries[scan + 1] = insert_entry;
+    end
+
+    if (enable_log)
+      $display("[%s] sort: reordered by age (oldest->youngest), size=%0d",
+               name, entries.size());
   endfunction
 
   // Print all entries (debug utility)

@@ -4,6 +4,11 @@
 
 `id_fifo` 是一个 SystemVerilog 验证工具类，提供以 ID 为索引的 FIFO 队列，支持回绕（wrap-around）感知的 ID 新老比较。常用于追踪乱序执行环境中的 in-flight 指令或事务。
 
+- 可用来记录 rid、pc、inst 之间的关系，在 commit 可以对指令内容进行检查
+- 可用来记录 rid、lid、sid 之间的关系
+- 可用来记录 lid 与 load uop 的关系
+- 可用来记录 sid 与 store uop 的关系
+
 ## 参数
 
 | 参数 | 默认值 | 说明 |
