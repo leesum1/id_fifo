@@ -1,55 +1,76 @@
-# Makefile for id_fifo — Verilator simulation
+# =============================================================================
+# Makefile — Verilator testbench build system
+# =============================================================================
+#
+# To add a new module:
+#   1. Create modules/<name>/src/ and modules/<name>/tb/
+#   2. Add <name> to MODULES below
+#   3. That's it — all tb_*.sv files are auto-discovered
+#
+# Targets:
+#   make test                    — run ALL module tests
+#   make test-<module>           — run tests for one module
+#   make lint                    — lint ALL modules
+#   make lint-<module>           — lint one module
+#   make check-tb                — verify tb files conform to template
+#   make clean                   — remove build artifacts
+# =============================================================================
 
-BUILD_DIR  := obj_dir
-BUILD_DIR2 := obj_dir_snap
+# ── Module registry (add new modules here) ──────────────────────────────────
+MODULES := id_fifo sys_reg_snap
 
-# --- id_fifo testbench ---
-TOP1       := id_fifo_tb
-SRC1       := id_fifo_tb.sv
-BIN1       := $(BUILD_DIR)/V$(TOP1)
+# ── Directories ─────────────────────────────────────────────────────────────
+BUILD_ROOT := build
 
-# --- sys_reg_snap testbench ---
-TOP2       := sys_reg_snap_tb
-SRC2       := sys_reg_snap_tb.sv
-BIN2       := $(BUILD_DIR2)/V$(TOP2)
+# ── Verilator flags ─────────────────────────────────────────────────────────
+VFLAGS := --binary --timing -sv -Wall --assert
 
-VFLAGS1    := --binary --timing -sv -Wall \
-              --assert \
-              --top-module $(TOP1) \
-              -Mdir $(BUILD_DIR)
+# ── Phony targets ───────────────────────────────────────────────────────────
+.PHONY: all test lint check-tb clean help \
+        $(addprefix test-,$(MODULES)) \
+        $(addprefix lint-,$(MODULES))
 
-VFLAGS2    := --binary --timing -sv -Wall \
-              --assert \
-              --top-module $(TOP2) \
-              -Mdir $(BUILD_DIR2)
+all: test
 
-.PHONY: all sim sim_snap lint lint_id_fifo lint_snap check clean
+help:
+	@echo "Usage:"
+	@echo "  make test              Run all tests"
+	@echo "  make test-<module>     Run tests for a module ($(MODULES))"
+	@echo "  make lint              Lint all modules"
+	@echo "  make lint-<module>     Lint a module"
+	@echo "  make check-tb          Check tb files against template"
+	@echo "  make clean             Remove build artifacts"
 
-all: sim sim_snap
+# ── Test targets ────────────────────────────────────────────────────────────
+test:
+	@./scripts/run_tests.sh
 
-lint: lint_id_fifo lint_snap
+define MODULE_RULES
+test-$(1):
+	@./scripts/run_tests.sh $(1)
 
-check: lint
+lint-$(1):
+	@echo "===== Linting $(1) ====="
+	@for f in modules/$(1)/tb/tb_*.sv; do \
+		[ -f "$$$$f" ] || continue; \
+		tb_base=$$$$(basename "$$$$f" .sv); \
+		echo "  lint $$$$tb_base"; \
+		verilator --lint-only --timing -sv -Wall \
+			--top-module "$$$$tb_base" \
+			-Imodules/$(1)/src \
+			"$$$$f"; \
+	done
+	@echo ""
+endef
 
-lint_id_fifo:
-	verilator --lint-only --timing -sv -Wall $(SRC1)
+$(foreach m,$(MODULES),$(eval $(call MODULE_RULES,$(m))))
 
-lint_snap:
-	verilator --lint-only --timing -sv -Wall $(SRC2)
+lint: $(addprefix lint-,$(MODULES))
 
-sim: $(BIN1)
-	@echo "===== Running id_fifo simulation ====="
-	./$(BIN1)
+# ── Conformance check ──────────────────────────────────────────────────────
+check-tb:
+	@./scripts/check_tb.sh
 
-sim_snap: $(BIN2)
-	@echo "===== Running sys_reg_snap simulation ====="
-	./$(BIN2)
-
-$(BIN1): $(SRC1) id_fifo.sv
-	verilator $(VFLAGS1) $(SRC1)
-
-$(BIN2): $(SRC2) sys_reg_snap.sv
-	verilator $(VFLAGS2) $(SRC2)
-
+# ── Clean ───────────────────────────────────────────────────────────────────
 clean:
-	rm -rf $(BUILD_DIR) $(BUILD_DIR2)
+	rm -rf $(BUILD_ROOT)
