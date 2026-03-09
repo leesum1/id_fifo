@@ -76,6 +76,16 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
   string name          = "sys_reg_snap";
 
   // --------------------------------------------------------------------------
+  // Statistics counters (dump-visible only)
+  // --------------------------------------------------------------------------
+  int stat_record_cnt    = 0;
+  int stat_retire_cnt    = 0;
+  int stat_query_hit_cnt = 0;
+  int stat_query_miss_cnt = 0;
+  int stat_peak_size     = 0;
+  int stat_snapshot_cnt  = 0;
+
+  // --------------------------------------------------------------------------
   // Constructor
   // --------------------------------------------------------------------------
   function new(string inst_name = "sys_reg_snap");
@@ -123,6 +133,13 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
     r.pre_value = pre_value;
     records.push_back(r);
 
+    // Update stat_record_cnt
+    stat_record_cnt++;
+
+    // Update stat_peak_size
+    if (records.size() > stat_peak_size)
+      stat_peak_size = records.size();
+
     if (enable_log)
       $display("[%s] record_update: rid=0x%0h  reg=0x%0h  pre=0x%0h  (size=%0d)",
                name, rid, reg_addr, pre_value, records.size());
@@ -166,10 +183,24 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
                  name, query_rid, reg_addr);
     end
 
-    if (enable_assert) begin
-      GET_VALUE_FOUND_CHECK: assert (found) else
-        $error("[%s] get_value_at — rid=0x%0h not found for reg=0x%0h", name, query_rid, reg_addr);
+    if (enable_assert && found) begin
+      bit hit_has_source = 0;
+      foreach (records[j]) begin
+        if (records[j].rid == best_rid && records[j].reg_addr == reg_addr) begin
+          hit_has_source = 1;
+          break;
+        end
+      end
+      GET_VALUE_HIT_SOURCE_CHECK: assert (hit_has_source) else
+        $error("[%s] get_value_at — internal error: hit record not found in history (query_rid=0x%0h reg=0x%0h best_rid=0x%0h)",
+               name, query_rid, reg_addr, best_rid);
     end
+
+    // Update stat counters
+    if (found)
+      stat_query_hit_cnt++;
+    else
+      stat_query_miss_cnt++;
 
     return found;
   endfunction
@@ -212,6 +243,9 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
       $display("[%s] get_snapshot_at: query_rid=0x%0h  regs_found=%0d",
                name, query_rid, result.size());
 
+    // Update stat counter
+    stat_snapshot_cnt++;
+
     return result;
   endfunction
 
@@ -225,11 +259,13 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
   // ==========================================================================
   function void retire(rid_t retire_rid);
     record_t keep[$];
+    int retired_count = 0;
 
     foreach (records[i]) begin
       if (is_younger(records[i].rid, retire_rid))
         keep.push_back(records[i]);
       else begin
+        retired_count++;
         if (enable_log)
           $display("[%s] retire: removing rid=0x%0h  reg=0x%0h",
                    name, records[i].rid, records[i].reg_addr);
@@ -237,6 +273,9 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
     end
 
     records = keep;
+
+    // Update stat counter
+    stat_retire_cnt += retired_count;
 
     if (enable_log)
       $display("[%s] retire: retire_rid=0x%0h  remaining=%0d", name, retire_rid, records.size());
@@ -258,8 +297,14 @@ class sys_reg_snap #(int ID_WIDTH = 8, int REG_WIDTH = 64, int ADDR_WIDTH = 8);
     foreach (records[i])
       $display("[%s]   [%0d] rid=0x%0h  reg=0x%0h  pre=0x%0h",
                name, i, records[i].rid, records[i].reg_addr, records[i].pre_value);
+    $display("[%s] --- statistics ---", name);
+    $display("[%s]   stat_record_cnt=%0d", name, stat_record_cnt);
+    $display("[%s]   stat_retire_cnt=%0d", name, stat_retire_cnt);
+    $display("[%s]   stat_query_hit_cnt=%0d", name, stat_query_hit_cnt);
+    $display("[%s]   stat_query_miss_cnt=%0d", name, stat_query_miss_cnt);
+    $display("[%s]   stat_peak_size=%0d", name, stat_peak_size);
+    $display("[%s]   stat_snapshot_cnt=%0d", name, stat_snapshot_cnt);
     $display("[%s] --- end dump ---", name);
   endfunction
 
 endclass
-
