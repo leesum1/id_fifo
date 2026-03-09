@@ -45,6 +45,15 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
   string name          = "id_fifo";
 
   // --------------------------------------------------------------------------
+  // Statistics (exposed through dump() output)
+  // --------------------------------------------------------------------------
+  int stat_push_cnt    = 0;    // total push operations
+  int stat_delete_cnt  = 0;    // total delete_by_id operations
+  int stat_flush_cnt   = 0;    // total flush operations (both flush_younger variants)
+  int stat_peak_size   = 0;    // maximum queue size reached
+  int stat_wrap_cnt    = 0;    // wrap bit transitions detected during push
+
+  // --------------------------------------------------------------------------
   // Constructor
   // --------------------------------------------------------------------------
   function new(string inst_name = "id_fifo");
@@ -85,11 +94,26 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
   // ==========================================================================
   function void push(id_t id, T data);
     entry_t e;
+    bit prev_wrap_bit;
+    bit curr_wrap_bit;
 
     e.id   = id;
     e.data = data;
 
+    // Track wrap bit transition
+    if (entries.size() > 0) begin
+      prev_wrap_bit = entries[$].id[ID_WIDTH-1];
+      curr_wrap_bit = id[ID_WIDTH-1];
+      if (prev_wrap_bit != curr_wrap_bit)
+        stat_wrap_cnt++;
+    end
+
     entries.push_back(e);
+    stat_push_cnt++;
+
+    // Track peak size
+    if (entries.size() > stat_peak_size)
+      stat_peak_size = entries.size();
 
     if (enable_log)
       $display("[%s] push: id=0x%0h  (size=%0d)", name, id, entries.size());
@@ -115,6 +139,9 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
                    name, entries[i].id, id);
       end
     end
+
+    if (keep.size() < entries.size())
+      stat_flush_cnt++;
 
     entries = keep;
 
@@ -143,6 +170,9 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
                    name, entries[i].id, id);
       end
     end
+
+    if (keep.size() < entries.size())
+      stat_flush_cnt++;
 
     entries = keep;
 
@@ -174,6 +204,7 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
 
       if (removed == 0) return;
 
+      stat_delete_cnt++;
       entries = keep;
 
       if (enable_log)
@@ -196,6 +227,7 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
 
       if (found_idx < 0) return;
 
+      stat_delete_cnt++;
       entries.delete(found_idx);
 
       if (enable_log)
@@ -306,6 +338,12 @@ class id_fifo #(type T = logic [7:0], int ID_WIDTH = 8);
     $display("[%s] --- dump (%0d entries) ---", name, entries.size());
     foreach (entries[i])
       $display("[%s]   [%0d] id=0x%0h", name, i, entries[i].id);
+    $display("[%s] --- statistics ---", name);
+    $display("[%s]   stat_push_cnt=%0d", name, stat_push_cnt);
+    $display("[%s]   stat_delete_cnt=%0d", name, stat_delete_cnt);
+    $display("[%s]   stat_flush_cnt=%0d", name, stat_flush_cnt);
+    $display("[%s]   stat_peak_size=%0d", name, stat_peak_size);
+    $display("[%s]   stat_wrap_cnt=%0d", name, stat_wrap_cnt);
     $display("[%s] --- end dump ---", name);
   endfunction
 
