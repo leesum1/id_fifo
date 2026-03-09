@@ -1,4 +1,4 @@
-# sys_reg_snap — 系统寄存器历史快照追踪器
+# sys_reg_snap: 系统寄存器历史快照追踪器
 
 ## 问题背景
 
@@ -92,6 +92,50 @@ sys_reg_snap #(
 | `empty()` | 是否为空 |
 | `dump()` | 打印所有记录（调试用） |
 
+## 统计信息（仅 dump 可见）
+
+`sys_reg_snap` 内部维护了一组统计计数器（`int`），用于在调试时快速判断 record / query / retire / snapshot 的覆盖情况。
+
+- 这些计数器**只通过 `dump()` 的 `$display` 输出暴露**，不作为稳定的对外 API 使用。
+- 不要在 TB 里依赖读取这些成员变量来驱动功能逻辑，它们主要用于观测和回归定位。
+
+计数器列表（名字与含义）：
+
+- `stat_record_cnt`：累计 `record_update()` 调用次数
+- `stat_retire_cnt`：累计 retire 掉的记录条目数（不是调用次数）
+- `stat_query_hit_cnt`：累计 `get_value_at()` 命中次数
+- `stat_query_miss_cnt`：累计 `get_value_at()` 未命中次数
+- `stat_peak_size`：历史峰值记录数（`records.size()` 的最大值）
+- `stat_snapshot_cnt`：累计 `get_snapshot_at()` 调用次数
+
+查看方式：调用 `dump()`，输出中会包含上述 `stat_*` 字段。
+
+## 随机压力测试（TB）约定
+
+### 固定随机种子
+
+随机压力测试必须可复现。
+
+- TB 内使用固定默认种子，例如：`localparam int DEFAULT_SEED = 99;`
+- 在任何随机化之前打印：`$display("SEED=%0d", DEFAULT_SEED);`
+- 然后显式播种：`void'($urandom(DEFAULT_SEED));`
+- 需要扩展压力时，可以通过修改 TB 常量来改变种子，不通过命令行或运行时参数注入种子
+
+### RID 分配规则（半空间安全 + 单调）
+
+随机测试里**禁止**直接随机生成 RID。
+
+- RID 必须按程序顺序单调分配（monotonic allocation），以满足 wrap-around 比较的前提
+- 任意时刻 live（in-flight）RID 的跨度必须不超过 RID 空间的一半，即 `2^(ID_WIDTH-1)`
+  - 超过半空间会导致回绕比较语义不再可靠
+
+### `(rid, reg_addr)` 唯一性
+
+随机测试必须遵守实现的硬约束：同一 `(rid, reg_addr)` 对不得重复插入。
+
+- 做随机 `record_update()` 时，需要在 TB 侧避免对同一 rid 重复写同一 reg_addr
+- 允许同一 rid 写不同 reg_addr（模拟一条指令更新多个 SYS_REG）
+
 ## 使用流程
 
 ```
@@ -127,7 +171,7 @@ sys_reg_snap #(
 |------|------------|--------|------|
 | `get_value_at(rid=1)` | rid=2, rid=5 | rid=2 | **hit**, val=20 |
 | `get_value_at(rid=3)` | rid=5 | rid=5 | **hit**, val=10 |
-| `get_value_at(rid=7)` | 无 | — | **miss**, 用 wire(30) |
+| `get_value_at(rid=7)` | 无 | - | **miss**, 用 wire(30) |
 
 ## 约束与限制
 

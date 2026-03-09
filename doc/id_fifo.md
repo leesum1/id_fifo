@@ -1,4 +1,4 @@
-# id_fifo — 参数化 ID 索引 FIFO
+# id_fifo: 参数化 ID 索引 FIFO
 
 ## 概述
 
@@ -51,7 +51,7 @@ ID 的 MSB 为 wrap bit，其余位为序号值。比较规则：
 | 不同（已回绕） | 序号值更小的为 younger |
 
 ```
-例：ID_WIDTH=4，序号范围 0–7，wrap bit = bit[3]
+例：ID_WIDTH=4，序号范围 0-7，wrap bit = bit[3]
 程序顺序：... 5(0b0101), 6(0b0110), 7(0b0111), 8(0b1000), 9(0b1001) ...
 is_younger(8, 7) = 1  ← 8 已回绕（wrap=1），val=0 < val=7
 is_younger(6, 7) = 0  ← 6 未回绕，val=6 < val=7，6 更老
@@ -104,6 +104,43 @@ is_younger(6, 7) = 0  ← 6 未回绕，val=6 < val=7，6 更老
 | `size() → int` | 当前条目数 |
 | `empty() → bit` | 是否为空 |
 | `dump()` | 打印所有条目（调试用） |
+
+## 统计信息（仅 dump 可见）
+
+`id_fifo` 内部维护了一组统计计数器（`int`），用于在调试时快速判断是否发生了预期的操作序列。
+
+- 这些计数器**只通过 `dump()` 的 `$display` 输出暴露**，不作为稳定的对外 API 使用。
+- 不要在 TB 里依赖读取这些成员变量来驱动功能逻辑，它们的存在主要用于观测和回归定位。
+
+计数器列表（名字与含义）：
+
+- `stat_push_cnt`：累计 `push()` 调用次数
+- `stat_delete_cnt`：累计 `delete_by_id()` 调用次数
+- `stat_flush_cnt`：累计 flush 调用次数，包含 `flush_younger()` 与 `flush_younger_or_eq()`
+- `stat_peak_size`：历史峰值队列长度（`entries.size()` 的最大值）
+- `stat_wrap_cnt`：在 `push()` 过程中检测到的 wrap bit 跳变次数
+
+查看方式：调用 `dump()`，输出中会包含上述 `stat_*` 字段。
+
+## 随机压力测试（TB）约定
+
+### 固定随机种子
+
+随机压力测试必须可复现。
+
+- TB 内使用固定默认种子，例如：`localparam int DEFAULT_SEED = 42;`
+- 在任何随机化之前打印：`$display("SEED=%0d", DEFAULT_SEED);`
+- 然后显式播种：`void'($urandom(DEFAULT_SEED));`
+- 需要扩展压力时，可以通过修改 TB 常量来改变种子，不通过命令行或运行时参数注入种子
+
+### ID 分配规则（半空间安全 + 单调）
+
+随机测试里**禁止**直接随机生成 ID。
+
+- ID 必须按程序顺序单调分配（monotonic allocation），以满足 wrap-around 比较的前提
+- 任意时刻 live（in-flight）ID 的跨度必须不超过 ID 空间的一半，即 `2^(ID_WIDTH-1)`
+  - 超过半空间会导致 `is_younger()` 的回绕比较语义不再可靠
+- 做随机操作时，允许随机选择 push/delete/flush 的时机与 payload，但 ID/RID 的生成必须保持上述约束
 
 ## 使用示例
 
